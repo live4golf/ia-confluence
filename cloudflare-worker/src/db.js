@@ -6,13 +6,13 @@
  * Record a new open trade (BUY or SELL).
  * Returns the inserted row id.
  */
-export async function openTrade(env, { action, symbol, qty, entry_price, mexc_order_id, status }) {
+export async function openTrade(env, { action, symbol, qty, entry_price, mexc_order_id, status, error_msg }) {
   const now = new Date().toISOString();
   const result = await env.DB.prepare(
-    `INSERT INTO trades (action, symbol, qty, entry_price, mexc_order_id, status, opened_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO trades (action, symbol, qty, entry_price, mexc_order_id, status, error_msg, opened_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   )
-    .bind(action, symbol, qty, entry_price, mexc_order_id ?? null, status, now)
+    .bind(action, symbol, qty, entry_price, mexc_order_id ?? null, status, error_msg ?? null, now)
     .run();
   return result.meta.last_row_id;
 }
