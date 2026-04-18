@@ -5,7 +5,7 @@ compatibility_date = "2024-09-23"
 [[d1_databases]]
 binding = "DB"
 database_name = "ia-confluence-trades"
-database_id   = "REPLACE_AFTER_WRANGLER_D1_CREATE"
+database_id   = "2c864d47-fde2-43f1-9294-251bfef480a6"
 
 [vars]
 # Set DRY_RUN = "true" during testing — no orders will be sent to MEXC

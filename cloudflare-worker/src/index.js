@@ -40,8 +40,10 @@ export default {
       return json({ ok: false, error: 'Invalid JSON' }, 400);
     }
 
-    // Validate secret
-    if (!env.WEBHOOK_SECRET || payload.secret !== env.WEBHOOK_SECRET) {
+    // Validate secret — accept from URL ?token= param OR payload body
+    const urlToken = url.searchParams.get('token');
+    const bodyToken = payload.secret;
+    if (!env.WEBHOOK_SECRET || (urlToken !== env.WEBHOOK_SECRET && bodyToken !== env.WEBHOOK_SECRET)) {
       return json({ ok: false, error: 'Unauthorized' }, 401);
     }
 

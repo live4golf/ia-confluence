@@ -1,5 +1,5 @@
 //@version=5
-indicator(title="IA Confluence [Custom Report]", shorttitle="IA-CR", overlay=true, max_labels_count=500, max_lines_count=200)
+indicator(title="LFG-IA-Confluence", shorttitle="LFG-IAC", overlay=true, max_labels_count=500, max_lines_count=200)
 
 // ─── SOURCE INPUTS ────────────────────────────────────────────────────────────
 mr_buy   = input.source(close, "1. MR Buy Alert",        tooltip="Select: IA-Mean-Reversion [3.6]: MeanRevert Buy Alert")
