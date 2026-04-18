@@ -28,7 +28,7 @@ export async function handleBuy(env, payload) {
     leverage: lev,
     side: 1,           // Open Long
     type: 5,           // Market order (MEXC uses type 5 for market)
-    openType: 2,       // Cross margin
+    openType: 1,       // Isolated margin
   });
 
   const status    = order.success ? 'open' : 'error';

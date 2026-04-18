@@ -9,7 +9,7 @@ database_id   = "2c864d47-fde2-43f1-9294-251bfef480a6"
 
 [vars]
 # Set DRY_RUN = "true" during testing — no orders will be sent to MEXC
-DRY_RUN  = "true"
+DRY_RUN  = "false"
 SYMBOL   = "SOL_USDT"
 LEVERAGE = "3"
 # Base URL — update if MEXC migrates again
