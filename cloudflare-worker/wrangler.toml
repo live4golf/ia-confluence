@@ -1,0 +1,21 @@
+name = "ia-confluence"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ia-confluence-trades"
+database_id   = "REPLACE_AFTER_WRANGLER_D1_CREATE"
+
+[vars]
+# Set DRY_RUN = "true" during testing — no orders will be sent to MEXC
+DRY_RUN  = "true"
+SYMBOL   = "SOL_USDT"
+LEVERAGE = "3"
+# Base URL — update if MEXC migrates again
+MEXC_BASE = "https://api.mexc.com"
+
+# Secrets — set via: npx wrangler secret put MEXC_API_KEY  etc.
+# MEXC_API_KEY     (your API access key)
+# MEXC_SECRET_KEY  (your API secret)
+# WEBHOOK_SECRET   (random string — must match TradingView alert payload)

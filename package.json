@@ -1,0 +1,16 @@
+{
+  "name": "trading-view",
+  "version": "1.0.0",
+  "description": "",
+  "main": "take_screenshot.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "chrome-remote-interface": "^0.34.0"
+  }
+}

@@ -12,11 +12,19 @@ ot_slow  = input.source(close, "7. OT Slow Plot",        tooltip="Select: IA-Opt
 
 // ─── PARAMETERS ───────────────────────────────────────────────────────────────
 i_capital      = input.float(100000, "Initial Capital (USDT)",            minval=100)
-lookback       = input.int(3,        "Signal lookback window (bars)",      minval=1, maxval=10)
-ot_confirm     = input.int(3,        "OT trend confirmation bars",         minval=1, maxval=20)
-require_mr     = input.bool(true,    "Require MR indicator",               tooltip="MR must confirm within lookback window")
-require_cm     = input.bool(true,    "Require CM indicator",               tooltip="CM must confirm within lookback window")
-require_ot     = input.bool(true,    "Require OT trend direction",         tooltip="OT ribbon must hold direction for confirmation bars")
+// ─── BUY SIGNAL SETTINGS ─────────────────────────────────────────────────────
+buy_lookback    = input.int(3,     "Lookback window (bars)",    group="Buy Signal", minval=1, maxval=20, tooltip="How many bars back a BUY indicator signal remains valid")
+buy_ot_confirm  = input.int(3,     "OT confirmation bars",      group="Buy Signal", minval=1, maxval=20, tooltip="OT ribbon must hold bullish for this many bars")
+buy_require_mr  = input.bool(true, "Require MR indicator",      group="Buy Signal")
+buy_require_cm  = input.bool(true, "Require CM indicator",      group="Buy Signal")
+buy_require_ot  = input.bool(true, "Require OT direction",      group="Buy Signal")
+
+// ─── SELL SIGNAL SETTINGS ────────────────────────────────────────────────────
+sell_lookback   = input.int(3,     "Lookback window (bars)",    group="Sell Signal", minval=1, maxval=20, tooltip="How many bars back a SELL indicator signal remains valid")
+sell_ot_confirm = input.int(3,     "OT confirmation bars",      group="Sell Signal", minval=1, maxval=20, tooltip="OT ribbon must hold bearish for this many bars")
+sell_require_mr = input.bool(true, "Require MR indicator",      group="Sell Signal")
+sell_require_cm = input.bool(true, "Require CM indicator",      group="Sell Signal")
+sell_require_ot = input.bool(true, "Require OT direction",      group="Sell Signal")
 enable_shorts  = input.bool(true,    "Enable short trades")
 only_profit    = input.bool(true,    "Only close when in profit")
 mr_buy_thresh  = input.float(0.7,    "MR Buy threshold  (osc ≤ -x)",      minval=0.0, maxval=3.0,  step=0.05, tooltip="Oscillator must be AT OR BELOW the negative of this value. e.g. 0.7 means osc ≤ -0.7")
@@ -73,13 +81,15 @@ cm_sell_sig = cm_sell > 0
 var bool ot_confirmed_bull = false
 var bool ot_confirmed_bear = false
 ot_bull_check = true
-ot_bear_check = true
-for i = 0 to ot_confirm - 1
+for i = 0 to buy_ot_confirm - 1
     if ot_fast[i] <= ot_slow[i]
         ot_bull_check := false
+ot_confirmed_bull := ot_bull_check
+
+ot_bear_check = true
+for i = 0 to sell_ot_confirm - 1
     if ot_fast[i] >= ot_slow[i]
         ot_bear_check := false
-ot_confirmed_bull := ot_bull_check
 ot_confirmed_bear := ot_bear_check
 
 // Profit-exit OT confirmation (uses tp_ot_confirm)
@@ -91,28 +101,28 @@ for i = 0 to tp_ot_confirm - 1
 tp_ot_bear := tp_bear_check
 
 // Standard signals — each required indicator MUST fire, non-required are ignored
-mr_buy_ok  = ta.barssince(mr_buy_sig)  <= lookback
-mr_sell_ok = ta.barssince(mr_sell_sig) <= lookback
-cm_buy_ok  = ta.barssince(cm_buy_sig)  <= lookback
-cm_sell_ok = ta.barssince(cm_sell_sig) <= lookback
+mr_buy_ok  = ta.barssince(mr_buy_sig)  <= buy_lookback
+mr_sell_ok = ta.barssince(mr_sell_sig) <= sell_lookback
+cm_buy_ok  = ta.barssince(cm_buy_sig)  <= buy_lookback
+cm_sell_ok = ta.barssince(cm_sell_sig) <= sell_lookback
 ot_buy_ok  = ot_confirmed_bull
 ot_sell_ok = ot_confirmed_bear
 
-buy_signal  = (not require_mr or mr_buy_ok)  and
-              (not require_cm or cm_buy_ok)  and
-              (not require_ot or ot_buy_ok)  and
-              (require_mr or require_cm or require_ot)
-sell_signal = (not require_mr or mr_sell_ok) and
-              (not require_cm or cm_sell_ok) and
-              (not require_ot or ot_sell_ok) and
-              (require_mr or require_cm or require_ot)
+buy_signal  = (not buy_require_mr or mr_buy_ok)   and
+              (not buy_require_cm or cm_buy_ok)   and
+              (not buy_require_ot or ot_buy_ok)   and
+              (buy_require_mr or buy_require_cm or buy_require_ot)
+sell_signal = (not sell_require_mr or mr_sell_ok) and
+              (not sell_require_cm or cm_sell_ok) and
+              (not sell_require_ot or ot_sell_ok) and
+              (sell_require_mr or sell_require_cm or sell_require_ot)
 
 // Once a signal fires, suppress it for the full lookback window
 // (prevents re-entry when the condition briefly dips false then returns true)
 var int last_buy_bar  = -999
 var int last_sell_bar = -999
-new_buy_signal  = buy_signal  and (bar_index - last_buy_bar  > lookback)
-new_sell_signal = sell_signal and (bar_index - last_sell_bar > lookback)
+new_buy_signal  = buy_signal  and (bar_index - last_buy_bar  > buy_lookback)
+new_sell_signal = sell_signal and (bar_index - last_sell_bar > sell_lookback)
 if new_buy_signal
     last_buy_bar  := bar_index
 if new_sell_signal
@@ -334,6 +344,7 @@ if new_buy_signal
             array.push(long_el,  array.size(long_ep))
             array.push(long_es,  array.size(short_ep))
             label.new(bar_index, low, "L " + str.tostring(math.round(close, 2)), style=label.style_label_up, color=color.new(#00E676, 20), textcolor=color.white, size=size.tiny)
+            alert('{"action":"BUY","qty":' + str.tostring(qty_val, "0.##") + ',"price":' + str.tostring(close, "0.##") + '}', alert.freq_all)
 
 // ─── PROFIT EXIT LONG (close long at target %, no new short) ────────────────
 if new_tp_sell_signal
@@ -354,6 +365,7 @@ if new_tp_sell_signal
                 wins += 1
             record_trade("Long", et_cl, ep_cl, close, net, "TP Exit", el_cl, es_cl)
             label.new(bar_index, low, "TP " + str.tostring(math.round(net, 0)) + " (" + str.tostring(math.round(unr_pct, 1)) + "%)", style=label.style_label_up, color=color.new(color.teal, 10), textcolor=color.white, size=size.tiny)
+            alert('{"action":"TP_EXIT","qty":' + str.tostring(qty_val, "0.##") + ',"price":' + str.tostring(close, "0.##") + '}', alert.freq_all)
 
 // ─── PROFIT EXIT SHORT (close short at target %, no new long) ────────────────
 if new_tps_buy_signal
@@ -374,6 +386,7 @@ if new_tps_buy_signal
                 wins += 1
             record_trade("Short", et_cs, ep_cs, close, net, "TP Exit", el_cs, es_cs)
             label.new(bar_index, high, "TP " + str.tostring(math.round(net, 0)) + " (" + str.tostring(math.round(unr_pct, 1)) + "%)", style=label.style_label_down, color=color.new(color.teal, 10), textcolor=color.white, size=size.tiny)
+            alert('{"action":"TP_EXIT_SHORT","qty":' + str.tostring(qty_val, "0.##") + ',"price":' + str.tostring(close, "0.##") + '}', alert.freq_all)
 
 // ─── SELL SIGNAL ──────────────────────────────────────────────────────────────
 if new_sell_signal
@@ -411,6 +424,7 @@ if new_sell_signal
             array.push(short_el,  array.size(long_ep))
             array.push(short_es,  array.size(short_ep))
             label.new(bar_index, high, "S " + str.tostring(math.round(close, 2)), style=label.style_label_down, color=color.new(#FF1744, 20), textcolor=color.white, size=size.tiny)
+            alert('{"action":"SELL","qty":' + str.tostring(qty_val, "0.##") + ',"price":' + str.tostring(close, "0.##") + '}', alert.freq_all)
 
 // ─── MAX DRAWDOWN ─────────────────────────────────────────────────────────────
 peak_equity := math.max(peak_equity, equity)

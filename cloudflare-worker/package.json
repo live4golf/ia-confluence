@@ -1,0 +1,16 @@
+{
+  "name": "ia-confluence-worker",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker: TradingView → MEXC Futures bridge with D1 trade logging",
+  "private": true,
+  "scripts": {
+    "dev":    "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:init:local": "wrangler d1 execute ia-confluence-trades --local --file=migrations/0001_init.sql",
+    "db:init:remote": "wrangler d1 execute ia-confluence-trades --file=migrations/0001_init.sql",
+    "db:query": "wrangler d1 execute ia-confluence-trades --command \"SELECT * FROM trades ORDER BY id DESC LIMIT 20\""
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}
