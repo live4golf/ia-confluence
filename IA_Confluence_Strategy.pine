@@ -1,0 +1,628 @@
+//@version=5
+indicator(title="IA Confluence [Custom Report]", shorttitle="IA-CR", overlay=true, max_labels_count=500, max_lines_count=200)
+
+// ─── SOURCE INPUTS ────────────────────────────────────────────────────────────
+mr_buy   = input.source(close, "1. MR Buy Alert",        tooltip="Select: IA-Mean-Reversion [3.6]: MeanRevert Buy Alert")
+mr_sell  = input.source(close, "2. MR Sell Alert",       tooltip="Select: IA-Mean-Reversion [3.6]: MeanRevert Sell Alert")
+mr_osc   = input.source(close, "3. MR Oscillator Value", tooltip="Select: IA-Mean-Reversion [3.6]: Plot")
+cm_buy   = input.source(close, "4. CM Buy Alert",        tooltip="Select: IA-Confluence-Model [3.6]: Conf Buy Alert")
+cm_sell  = input.source(close, "5. CM Sell Alert",       tooltip="Select: IA-Confluence-Model [3.6]: Conf Sell Alert")
+ot_fast  = input.source(close, "6. OT Fast Plot",        tooltip="Select: IA-Optimized-Trend [1.3]: Fast Plot")
+ot_slow  = input.source(close, "7. OT Slow Plot",        tooltip="Select: IA-Optimized-Trend [1.3]: Slow Plot")
+
+// ─── PARAMETERS ───────────────────────────────────────────────────────────────
+i_capital      = input.float(100000, "Initial Capital (USDT)",            minval=100)
+lookback       = input.int(3,        "Signal lookback window (bars)",      minval=1, maxval=10)
+ot_confirm     = input.int(3,        "OT trend confirmation bars",         minval=1, maxval=20)
+require_mr     = input.bool(true,    "Require MR indicator",               tooltip="MR must confirm within lookback window")
+require_cm     = input.bool(true,    "Require CM indicator",               tooltip="CM must confirm within lookback window")
+require_ot     = input.bool(true,    "Require OT trend direction",         tooltip="OT ribbon must hold direction for confirmation bars")
+enable_shorts  = input.bool(true,    "Enable short trades")
+only_profit    = input.bool(true,    "Only close when in profit")
+mr_buy_thresh  = input.float(0.7,    "MR Buy threshold  (osc ≤ -x)",      minval=0.0, maxval=3.0,  step=0.05, tooltip="Oscillator must be AT OR BELOW the negative of this value. e.g. 0.7 means osc ≤ -0.7")
+mr_sell_thresh = input.float( 0.7,   "MR Sell threshold (osc ≥)",         minval= 0.0, maxval= 3.0, step=0.05)
+trade_usdt    = input.float(15.0,   "USDT per trade (margin)",           minval=1.0, maxval=10000.0, step=1.0,  tooltip="Fixed USDT margin per position. At 3x leverage, $15 controls $45 of SOL.")
+max_open      = input.int(10,       "Max open trades (total)",           minval=1,   maxval=200,              tooltip="Hard cap on total simultaneous open positions (longs + shorts combined).")
+lev            = input.int(1,        "Leverage multiplier",                minval=1,   maxval=20)
+comm_pct       = input.float(0.05,   "Commission per side (%)",            minval=0.0, maxval=1.0,   step=0.01)
+use_trail      = input.bool(true,    "Use trailing stop loss")
+trail_pct      = input.float(20.0,   "Long trailing stop %",               minval=1.0, maxval=50.0,  step=0.5)
+short_trail_pct = input.float(5.0,   "Short trailing stop %",              minval=1.0, maxval=50.0,  step=0.5, tooltip="Tighter than longs — recommended 5%. At SOL low of 79.72, a 5% TSL triggers at 83.71, locking in profit well before any full reversal.")
+
+// ─── HTF TREND FILTER ─────────────────────────────────────────────────────────
+htf_filter_on  = input.bool(false,   "Block shorts when HTF is bullish",   group="HTF Trend Filter", tooltip="Prevents short entries when the higher timeframe trend is up. Recommended: enable for trending markets.")
+htf_res        = input.timeframe("120", "Higher timeframe",                group="HTF Trend Filter", tooltip="120 = 2h | 60 = 1h | 240 = 4h | D = Daily")
+htf_ema_len    = input.int(50,       "EMA length",                         group="HTF Trend Filter", minval=5, maxval=500, tooltip="Price above this EMA = bullish (shorts blocked). Tune to visually match your 2H OT indicator.")
+
+// ─── PROFIT EXIT PARAMETERS ───────────────────────────────────────────────────
+tp_enabled     = input.bool(true,    "Enable profit exit",                 group="Profit Exit", tooltip="When the most recent long reaches the target profit %, use these parameters to trigger the close")
+tp_pct         = input.float(5.0,    "Trigger profit %",                   group="Profit Exit", minval=0.1, maxval=500.0, step=0.5, tooltip="Unrealised profit % (after leverage) on the most recent long required to activate")
+tp_lookback    = input.int(5,        "Lookback window (bars)",             group="Profit Exit", minval=1, maxval=20)
+tp_ot_confirm  = input.int(1,        "OT confirmation bars",               group="Profit Exit", minval=1, maxval=20)
+tp_require_mr  = input.bool(true,    "Require MR indicator",               group="Profit Exit")
+tp_require_cm  = input.bool(true,    "Require CM indicator",               group="Profit Exit")
+tp_require_ot  = input.bool(false,   "Require OT direction",               group="Profit Exit")
+
+// ─── SHORT PROFIT EXIT PARAMETERS ────────────────────────────────────────────
+tps_enabled    = input.bool(true,    "Enable short profit exit",           group="Short Profit Exit", tooltip="Close a short when it reaches the target profit %, using looser buy signal conditions")
+tps_pct        = input.float(2.0,    "Trigger profit %",                   group="Short Profit Exit", minval=0.1, maxval=100.0, step=0.5, tooltip="Recommended: 2% price move = 6% at 3x leverage. Based on chart analysis most SOL shorts reach 2-4% before reversing.")
+tps_lookback   = input.int(5,        "Lookback window (bars)",             group="Short Profit Exit", minval=1, maxval=20)
+tps_ot_confirm = input.int(1,        "OT confirmation bars",               group="Short Profit Exit", minval=1, maxval=20)
+tps_require_mr = input.bool(true,    "Require MR indicator",               group="Short Profit Exit")
+tps_require_cm = input.bool(true,    "Require CM indicator",               group="Short Profit Exit")
+tps_require_ot = input.bool(false,   "Require OT direction",               group="Short Profit Exit")
+
+display_tz     = input.string("UTC+7", "Display timezone",                 options=["UTC", "UTC+1", "UTC+2", "UTC+3", "UTC+4", "UTC+5", "UTC+5:30", "UTC+6", "UTC+7", "UTC+8", "UTC+9", "UTC+10", "UTC+11", "UTC+12", "UTC-3", "UTC-4", "UTC-5", "UTC-6", "UTC-7", "UTC-8"], tooltip="Must match your TradingView chart timezone setting")
+show_signals   = input.bool(true,    "Show signals on chart")
+show_table     = input.bool(true,    "Show performance table")
+show_trades    = input.bool(true,    "Show trade list")
+max_show       = input.int(20,       "Trades per page",                    minval=5,   maxval=50)
+page           = input.int(1,        "Trade list page",                    minval=1,   tooltip="Change page number to scroll through trade history. Page 1 = most recent.")
+
+// ─── HTF TREND CALCULATION ────────────────────────────────────────────────────
+htf_ema  = request.security(syminfo.tickerid, htf_res, ta.ema(close, htf_ema_len), lookahead=barmerge.lookahead_off)
+htf_bull = close > htf_ema   // price above HTF EMA = bullish → block shorts
+
+// ─── SIGNAL CONDITIONS ────────────────────────────────────────────────────────
+mr_buy_sig  = mr_buy  > 0 and mr_osc <= -mr_buy_thresh
+mr_sell_sig = mr_sell > 0 and mr_osc >= mr_sell_thresh
+cm_buy_sig  = cm_buy  > 0
+cm_sell_sig = cm_sell > 0
+
+// Standard OT confirmation
+var bool ot_confirmed_bull = false
+var bool ot_confirmed_bear = false
+ot_bull_check = true
+ot_bear_check = true
+for i = 0 to ot_confirm - 1
+    if ot_fast[i] <= ot_slow[i]
+        ot_bull_check := false
+    if ot_fast[i] >= ot_slow[i]
+        ot_bear_check := false
+ot_confirmed_bull := ot_bull_check
+ot_confirmed_bear := ot_bear_check
+
+// Profit-exit OT confirmation (uses tp_ot_confirm)
+var bool tp_ot_bear = false
+tp_bear_check = true
+for i = 0 to tp_ot_confirm - 1
+    if ot_fast[i] >= ot_slow[i]
+        tp_bear_check := false
+tp_ot_bear := tp_bear_check
+
+// Standard signals — each required indicator MUST fire, non-required are ignored
+mr_buy_ok  = ta.barssince(mr_buy_sig)  <= lookback
+mr_sell_ok = ta.barssince(mr_sell_sig) <= lookback
+cm_buy_ok  = ta.barssince(cm_buy_sig)  <= lookback
+cm_sell_ok = ta.barssince(cm_sell_sig) <= lookback
+ot_buy_ok  = ot_confirmed_bull
+ot_sell_ok = ot_confirmed_bear
+
+buy_signal  = (not require_mr or mr_buy_ok)  and
+              (not require_cm or cm_buy_ok)  and
+              (not require_ot or ot_buy_ok)  and
+              (require_mr or require_cm or require_ot)
+sell_signal = (not require_mr or mr_sell_ok) and
+              (not require_cm or cm_sell_ok) and
+              (not require_ot or ot_sell_ok) and
+              (require_mr or require_cm or require_ot)
+
+// Once a signal fires, suppress it for the full lookback window
+// (prevents re-entry when the condition briefly dips false then returns true)
+var int last_buy_bar  = -999
+var int last_sell_bar = -999
+new_buy_signal  = buy_signal  and (bar_index - last_buy_bar  > lookback)
+new_sell_signal = sell_signal and (bar_index - last_sell_bar > lookback)
+if new_buy_signal
+    last_buy_bar  := bar_index
+if new_sell_signal
+    last_sell_bar := bar_index
+
+// Profit-exit signal (uses tp_ per-indicator toggles)
+tp_mr_sell_ok  = ta.barssince(mr_sell_sig) <= tp_lookback
+tp_cm_sell_ok  = ta.barssince(cm_sell_sig) <= tp_lookback
+tp_sell_signal = tp_enabled and
+                 (not tp_require_mr or tp_mr_sell_ok) and
+                 (not tp_require_cm or tp_cm_sell_ok) and
+                 (not tp_require_ot or tp_ot_bear)    and
+                 (tp_require_mr or tp_require_cm or tp_require_ot)
+
+var int last_tp_sell_bar = -999
+new_tp_sell_signal = tp_sell_signal and (bar_index - last_tp_sell_bar > tp_lookback)
+if new_tp_sell_signal
+    last_tp_sell_bar := bar_index
+
+// Short profit-exit signal (uses tps_ parameters — BUY indicators signal recovery)
+tps_ot_bull_check = true
+for i = 0 to tps_ot_confirm - 1
+    if ot_fast[i] <= ot_slow[i]
+        tps_ot_bull_check := false
+var bool tps_ot_bull = false
+tps_ot_bull := tps_ot_bull_check
+
+tps_mr_buy_ok  = ta.barssince(mr_buy_sig) <= tps_lookback
+tps_cm_buy_ok  = ta.barssince(cm_buy_sig) <= tps_lookback
+tps_buy_signal = tps_enabled and
+                 (not tps_require_mr or tps_mr_buy_ok) and
+                 (not tps_require_cm or tps_cm_buy_ok) and
+                 (not tps_require_ot or tps_ot_bull)   and
+                 (tps_require_mr or tps_require_cm or tps_require_ot)
+
+var int last_tps_buy_bar = -999
+new_tps_buy_signal = tps_buy_signal and (bar_index - last_tps_buy_bar > tps_lookback)
+if new_tps_buy_signal
+    last_tps_buy_bar := bar_index
+
+// ─── OPEN POSITION ARRAYS ─────────────────────────────────────────────────────
+var array<float> long_ep  = array.new<float>()
+var array<float> long_hwm = array.new<float>()
+var array<float> long_qty = array.new<float>()
+var array<int>   long_et  = array.new<int>()
+var array<int>   long_el  = array.new<int>()   // open longs at entry time (incl. this one)
+var array<int>   long_es  = array.new<int>()   // open shorts at entry time
+
+var array<float> short_ep  = array.new<float>()
+var array<float> short_lwm = array.new<float>()
+var array<float> short_qty = array.new<float>()
+var array<int>   short_et  = array.new<int>()
+var array<int>   short_el  = array.new<int>()  // open longs at entry time
+var array<int>   short_es  = array.new<int>()  // open shorts at entry time (incl. this one)
+
+// ─── TRADE HISTORY ARRAYS ─────────────────────────────────────────────────────
+var array<int>    th_num   = array.new<int>()
+var array<string> th_dir   = array.new<string>()
+var array<string> th_edate = array.new<string>()
+var array<string> th_xdate = array.new<string>()
+var array<float>  th_ep    = array.new<float>()
+var array<float>  th_xp    = array.new<float>()
+var array<string> th_pnl   = array.new<string>()
+var array<string> th_pct   = array.new<string>()
+var array<string> th_rsn   = array.new<string>()
+var array<bool>   th_win    = array.new<bool>()
+var array<float>  th_et_raw = array.new<float>()   // raw entry timestamp for sorting
+var array<int>    th_open_l = array.new<int>()      // open longs at exit time
+var array<int>    th_open_s = array.new<int>()      // open shorts at exit time
+
+// ─── P&L ACCUMULATORS ────────────────────────────────────────────────────────
+var float equity       = i_capital
+var float realised_pnl = 0.0
+var float total_fees   = 0.0
+var int   total_closed = 0
+var int   wins         = 0
+var float peak_equity   = i_capital
+var float max_dd_pct    = 0.0
+var int   max_open_l    = 0
+var int   max_open_s    = 0
+var int   max_open_tot  = 0
+
+comm = comm_pct / 100.0
+
+// ─── HELPER: record a completed trade ────────────────────────────────────────
+record_trade(dir, entry_t, ep, xp, net, rsn, entry_open_l, entry_open_s) =>
+    edate   = str.format_time(entry_t, "dd MMM HH:mm", display_tz)
+    xdate   = str.format_time(time,    "dd MMM HH:mm", display_tz)
+    raw_pct = dir == "Long" ? (xp - ep) / ep * 100 * lev : (ep - xp) / ep * 100 * lev
+    pct_str = (raw_pct >= 0 ? "+" : "") + str.tostring(math.round(raw_pct, 2)) + "%"
+    array.push(th_num,   total_closed)
+    array.push(th_dir,   dir)
+    array.push(th_edate, edate)
+    array.push(th_xdate, xdate)
+    array.push(th_ep,    ep)
+    array.push(th_xp,    xp)
+    array.push(th_pnl,   str.tostring(math.round(net, 0)))
+    array.push(th_pct,   pct_str)
+    array.push(th_rsn,    rsn)
+    array.push(th_win,    net >= 0)
+    array.push(th_et_raw, float(entry_t))
+    array.push(th_open_l, entry_open_l)
+    array.push(th_open_s, entry_open_s)
+
+// ─── HELPER: close a long position ───────────────────────────────────────────
+close_long(idx, exit_price) =>
+    ep  = array.get(long_ep,  idx)
+    qty = array.get(long_qty, idx)
+    et  = array.get(long_et,  idx)
+    el  = array.get(long_el,  idx)
+    es  = array.get(long_es,  idx)
+    pnl = qty * (exit_price - ep)
+    fee = qty * (ep + exit_price) * comm
+    net = pnl - fee
+    array.remove(long_ep,  idx)
+    array.remove(long_hwm, idx)
+    array.remove(long_qty, idx)
+    array.remove(long_et,  idx)
+    array.remove(long_el,  idx)
+    array.remove(long_es,  idx)
+    [net, ep, et, el, es]
+
+// ─── HELPER: close a short position ──────────────────────────────────────────
+close_short(idx, exit_price) =>
+    ep  = array.get(short_ep,  idx)
+    qty = array.get(short_qty, idx)
+    et  = array.get(short_et,  idx)
+    el  = array.get(short_el,  idx)
+    es  = array.get(short_es,  idx)
+    pnl = qty * (ep - exit_price)
+    fee = qty * (ep + exit_price) * comm
+    net = pnl - fee
+    array.remove(short_ep,  idx)
+    array.remove(short_lwm, idx)
+    array.remove(short_qty, idx)
+    array.remove(short_et,  idx)
+    array.remove(short_el,  idx)
+    array.remove(short_es,  idx)
+    [net, ep, et, el, es]
+
+// ─── UPDATE WATER MARKS ───────────────────────────────────────────────────────
+if array.size(long_hwm) > 0
+    for i = 0 to array.size(long_hwm) - 1
+        array.set(long_hwm, i, math.max(array.get(long_hwm, i), high))
+
+if array.size(short_lwm) > 0
+    for i = 0 to array.size(short_lwm) - 1
+        array.set(short_lwm, i, math.min(array.get(short_lwm, i), low))
+
+// ─── TRAILING STOPS ───────────────────────────────────────────────────────────
+if use_trail
+    if array.size(long_ep) > 0
+        for i = array.size(long_ep) - 1 to 0
+            if array.size(long_ep) > i
+                hwm_val   = array.get(long_hwm, i)
+                tsl_level = hwm_val * (1 - trail_pct / 100)
+                if close <= tsl_level
+                    exit_fee   = array.get(long_qty, i) * close * comm
+                    margin_ret = array.get(long_qty, i) * array.get(long_ep, i) / lev
+                    [net, ep_cl, et_cl, el_cl, es_cl] = close_long(i, close)
+                    equity       += net + margin_ret
+                    realised_pnl += net
+                    total_fees   += exit_fee
+                    total_closed += 1
+                    if net >= 0
+                        wins += 1
+                    record_trade("Long", et_cl, ep_cl, close, net, "TSL", el_cl, es_cl)
+                    label.new(bar_index, low, "TSL " + str.tostring(math.round(net, 0)), style=label.style_label_up, color=color.new(color.red, 20), textcolor=color.white, size=size.tiny)
+
+    if array.size(short_ep) > 0
+        for i = array.size(short_ep) - 1 to 0
+            if array.size(short_ep) > i
+                lwm_val   = array.get(short_lwm, i)
+                tsl_level = lwm_val * (1 + short_trail_pct / 100)
+                if close >= tsl_level
+                    exit_fee   = array.get(short_qty, i) * close * comm
+                    margin_ret = array.get(short_qty, i) * array.get(short_ep, i) / lev
+                    [net, ep_cs, et_cs, el_cs, es_cs] = close_short(i, close)
+                    equity       += net + margin_ret
+                    realised_pnl += net
+                    total_fees   += exit_fee
+                    total_closed += 1
+                    if net >= 0
+                        wins += 1
+                    record_trade("Short", et_cs, ep_cs, close, net, "TSL", el_cs, es_cs)
+                    label.new(bar_index, high, "TSL " + str.tostring(math.round(net, 0)), style=label.style_label_down, color=color.new(color.red, 20), textcolor=color.white, size=size.tiny)
+
+// ─── BUY SIGNAL ───────────────────────────────────────────────────────────────
+if new_buy_signal
+    // LIFO close most recent short
+    if array.size(short_ep) > 0
+        idx    = array.size(short_ep) - 1
+        ep_val = array.get(short_ep, idx)
+        if not only_profit or close < ep_val
+            exit_fee   = array.get(short_qty, idx) * close * comm
+            margin_ret = array.get(short_qty, idx) * ep_val / lev
+            [net, ep_cs, et_cs, el_cs, es_cs] = close_short(idx, close)
+            equity       += net + margin_ret
+            realised_pnl += net
+            total_fees   += exit_fee
+            total_closed += 1
+            if net >= 0
+                wins += 1
+            record_trade("Short", et_cs, ep_cs, close, net, "Signal", el_cs, es_cs)
+            label.new(bar_index, high, "Cvr " + str.tostring(math.round(net, 0)), style=label.style_label_down, color=net >= 0 ? color.green : color.red, textcolor=color.white, size=size.tiny)
+
+    // Open new long — blocked if at max open positions
+    if array.size(long_ep) + array.size(short_ep) < max_open
+        qty_val = math.round(trade_usdt * lev / close * 100) / 100
+        if qty_val >= 0.01
+            margin      = qty_val * close / lev
+            entry_fee   = qty_val * close * comm
+            equity     -= margin + entry_fee
+            total_fees += entry_fee
+            array.push(long_ep,  close)
+            array.push(long_hwm, close)
+            array.push(long_qty, qty_val)
+            array.push(long_et,  time)
+            array.push(long_el,  array.size(long_ep))
+            array.push(long_es,  array.size(short_ep))
+            label.new(bar_index, low, "L " + str.tostring(math.round(close, 2)), style=label.style_label_up, color=color.new(#00E676, 20), textcolor=color.white, size=size.tiny)
+
+// ─── PROFIT EXIT LONG (close long at target %, no new short) ────────────────
+if new_tp_sell_signal
+    if array.size(long_ep) > 0
+        idx     = array.size(long_ep) - 1
+        ep_val  = array.get(long_ep,  idx)
+        qty_val = array.get(long_qty, idx)
+        unr_pct = (close - ep_val) / ep_val * 100 * lev
+        if unr_pct >= tp_pct
+            exit_fee   = qty_val * close * comm
+            margin_ret = qty_val * ep_val / lev
+            [net, ep_cl, et_cl, el_cl, es_cl] = close_long(idx, close)
+            equity       += net + margin_ret
+            realised_pnl += net
+            total_fees   += exit_fee
+            total_closed += 1
+            if net >= 0
+                wins += 1
+            record_trade("Long", et_cl, ep_cl, close, net, "TP Exit", el_cl, es_cl)
+            label.new(bar_index, low, "TP " + str.tostring(math.round(net, 0)) + " (" + str.tostring(math.round(unr_pct, 1)) + "%)", style=label.style_label_up, color=color.new(color.teal, 10), textcolor=color.white, size=size.tiny)
+
+// ─── PROFIT EXIT SHORT (close short at target %, no new long) ────────────────
+if new_tps_buy_signal
+    if array.size(short_ep) > 0
+        idx     = array.size(short_ep) - 1
+        ep_val  = array.get(short_ep,  idx)
+        qty_val = array.get(short_qty, idx)
+        unr_pct = (ep_val - close) / ep_val * 100 * lev  // profit % for short
+        if unr_pct >= tps_pct
+            exit_fee   = qty_val * close * comm
+            margin_ret = qty_val * ep_val / lev
+            [net, ep_cs, et_cs, el_cs, es_cs] = close_short(idx, close)
+            equity       += net + margin_ret
+            realised_pnl += net
+            total_fees   += exit_fee
+            total_closed += 1
+            if net >= 0
+                wins += 1
+            record_trade("Short", et_cs, ep_cs, close, net, "TP Exit", el_cs, es_cs)
+            label.new(bar_index, high, "TP " + str.tostring(math.round(net, 0)) + " (" + str.tostring(math.round(unr_pct, 1)) + "%)", style=label.style_label_down, color=color.new(color.teal, 10), textcolor=color.white, size=size.tiny)
+
+// ─── SELL SIGNAL ──────────────────────────────────────────────────────────────
+if new_sell_signal
+    // LIFO close most recent long
+    if array.size(long_ep) > 0
+        idx    = array.size(long_ep) - 1
+        ep_val = array.get(long_ep, idx)
+        if not only_profit or close > ep_val
+            exit_fee   = array.get(long_qty, idx) * close * comm
+            margin_ret = array.get(long_qty, idx) * ep_val / lev
+            [net, ep_cl, et_cl, el_cl, es_cl] = close_long(idx, close)
+            equity       += net + margin_ret
+            realised_pnl += net
+            total_fees   += exit_fee
+            total_closed += 1
+            if net >= 0
+                wins += 1
+            record_trade("Long", et_cl, ep_cl, close, net, "Signal", el_cl, es_cl)
+            label.new(bar_index, low, "Sl " + str.tostring(math.round(net, 0)), style=label.style_label_up, color=net >= 0 ? color.green : color.red, textcolor=color.white, size=size.tiny)
+
+    // Open new short — blocked when HTF is bullish or at max open positions
+    htf_shorts_ok = not htf_filter_on or not htf_bull
+    cap_shorts_ok = array.size(long_ep) + array.size(short_ep) < max_open
+    if enable_shorts and htf_shorts_ok and cap_shorts_ok
+        qty_val = math.round(trade_usdt * lev / close * 100) / 100
+        if qty_val >= 0.01
+            margin      = qty_val * close / lev
+            entry_fee   = qty_val * close * comm
+            equity     -= margin + entry_fee
+            total_fees += entry_fee
+            array.push(short_ep,  close)
+            array.push(short_lwm, close)
+            array.push(short_qty, qty_val)
+            array.push(short_et,  time)
+            array.push(short_el,  array.size(long_ep))
+            array.push(short_es,  array.size(short_ep))
+            label.new(bar_index, high, "S " + str.tostring(math.round(close, 2)), style=label.style_label_down, color=color.new(#FF1744, 20), textcolor=color.white, size=size.tiny)
+
+// ─── MAX DRAWDOWN ─────────────────────────────────────────────────────────────
+peak_equity := math.max(peak_equity, equity)
+curr_dd      = peak_equity > 0 ? (peak_equity - equity) / peak_equity * 100 : 0.0
+max_dd_pct  := math.max(max_dd_pct, curr_dd)
+
+// ─── UNREALISED P&L ───────────────────────────────────────────────────────────
+unreal = 0.0
+if array.size(long_ep) > 0
+    for i = 0 to array.size(long_ep) - 1
+        unreal += array.get(long_qty, i) * (close - array.get(long_ep, i))
+if array.size(short_ep) > 0
+    for i = 0 to array.size(short_ep) - 1
+        unreal += array.get(short_qty, i) * (array.get(short_ep, i) - close)
+total_pnl = realised_pnl + unreal
+
+// ─── UPDATE MAX OPEN POSITION TRACKERS ───────────────────────────────────────
+max_open_l   := math.max(max_open_l,   array.size(long_ep))
+max_open_s   := math.max(max_open_s,   array.size(short_ep))
+max_open_tot := math.max(max_open_tot, array.size(long_ep) + array.size(short_ep))
+
+// ─── PERFORMANCE TABLE (top right) ───────────────────────────────────────────
+var table t_summary = table.new(position.top_right, 2, 15,
+     bgcolor=color.new(#0d1b2a, 10), border_color=color.new(color.white, 60),
+     border_width=1, frame_color=color.new(color.white, 40), frame_width=1)
+
+if show_table and barstate.islast
+    win_rate = total_closed > 0 ? wins / total_closed * 100 : 0.0
+    pnl_pct  = total_pnl / i_capital * 100
+    green    = color.new(#00E676, 0)
+    red      = color.new(#FF1744, 0)
+    hdr_bg   = color.new(#1a3a5c, 20)
+    cell_bg  = color.new(#0d1b2a, 30)
+
+    table.cell(t_summary, 0, 0,  "IA Confluence",                text_color=color.white,  bgcolor=hdr_bg, text_halign=text.align_center, text_size=size.small)
+    table.cell(t_summary, 1, 0,  str.tostring(lev) + "x Lev",   text_color=color.yellow, bgcolor=hdr_bg, text_halign=text.align_center, text_size=size.small)
+    table.cell(t_summary, 0, 1,  "Total P&L",     text_color=color.silver, bgcolor=cell_bg)
+    table.cell(t_summary, 1, 1,  str.tostring(math.round(total_pnl, 0)) + " (" + str.tostring(math.round(pnl_pct, 1)) + "%)", text_color=total_pnl >= 0 ? green : red, bgcolor=cell_bg)
+    table.cell(t_summary, 0, 2,  "Realised",       text_color=color.silver, bgcolor=cell_bg)
+    table.cell(t_summary, 1, 2,  str.tostring(math.round(realised_pnl, 0)) + " USDT", text_color=realised_pnl >= 0 ? green : red, bgcolor=cell_bg)
+    table.cell(t_summary, 0, 3,  "Unrealised",     text_color=color.silver, bgcolor=cell_bg)
+    table.cell(t_summary, 1, 3,  str.tostring(math.round(unreal, 0)) + " USDT", text_color=unreal >= 0 ? green : red, bgcolor=cell_bg)
+    table.cell(t_summary, 0, 4,  "Equity",         text_color=color.silver, bgcolor=cell_bg)
+    table.cell(t_summary, 1, 4,  str.tostring(math.round(equity, 0)) + " USDT", text_color=color.white, bgcolor=cell_bg)
+    table.cell(t_summary, 0, 5,  "Closed Trades",  text_color=color.silver, bgcolor=cell_bg)
+    table.cell(t_summary, 1, 5,  str.tostring(total_closed), text_color=color.white, bgcolor=cell_bg)
+    table.cell(t_summary, 0, 6,  "Win Rate",       text_color=color.silver, bgcolor=cell_bg)
+    table.cell(t_summary, 1, 6,  str.tostring(math.round(win_rate, 1)) + "%", text_color=win_rate >= 50 ? green : red, bgcolor=cell_bg)
+    table.cell(t_summary, 0, 7,  "Max Drawdown",   text_color=color.silver, bgcolor=cell_bg)
+    table.cell(t_summary, 1, 7,  str.tostring(math.round(max_dd_pct, 1)) + "%", text_color=color.orange, bgcolor=cell_bg)
+    table.cell(t_summary, 0, 8,  "Open Longs",     text_color=color.silver, bgcolor=cell_bg)
+    table.cell(t_summary, 1, 8,  str.tostring(array.size(long_ep)), text_color=green, bgcolor=cell_bg)
+    table.cell(t_summary, 0, 9,  "Open Shorts",    text_color=color.silver, bgcolor=cell_bg)
+    table.cell(t_summary, 1, 9,  str.tostring(array.size(short_ep)), text_color=red, bgcolor=cell_bg)
+    table.cell(t_summary, 0, 10, "Fees Paid",       text_color=color.silver, bgcolor=cell_bg)
+    table.cell(t_summary, 1, 10, str.tostring(math.round(total_fees, 0)) + " USDT", text_color=color.orange, bgcolor=cell_bg)
+    table.cell(t_summary, 0, 11, "Peak Open Total", text_color=color.silver, bgcolor=cell_bg)
+    table.cell(t_summary, 1, 11, str.tostring(max_open_tot), text_color=color.white, bgcolor=cell_bg)
+    table.cell(t_summary, 0, 12, "Peak Open Longs", text_color=color.silver, bgcolor=cell_bg)
+    table.cell(t_summary, 1, 12, str.tostring(max_open_l), text_color=green, bgcolor=cell_bg)
+    table.cell(t_summary, 0, 13, "Peak Open Shorts",text_color=color.silver, bgcolor=cell_bg)
+    table.cell(t_summary, 1, 13, str.tostring(max_open_s), text_color=red, bgcolor=cell_bg)
+    table.cell(t_summary, 0, 14, "Buying Power",    text_color=color.silver, bgcolor=cell_bg)
+    table.cell(t_summary, 1, 14, str.tostring(math.round(equity * lev, 0)) + " USDT", text_color=color.aqua, bgcolor=cell_bg)
+
+// ─── TRADE LIST TABLE (bottom left) ──────────────────────────────────────────
+var table t_trades = table.new(position.bottom_left, 10, 71,
+     bgcolor=color.new(#0d1b2a, 10), border_color=color.new(color.white, 70),
+     border_width=1, frame_color=color.new(color.white, 40), frame_width=1)
+
+if show_trades and barstate.islast
+    n_trades = array.size(th_dir)
+    n_open_l = array.size(long_ep)
+    n_open_s = array.size(short_ep)
+    hdr_bg   = color.new(#1a3a5c, 20)
+    open_bg  = color.new(#1a3a2a, 40)
+    cell_bg  = color.new(#0d1b2a, 30)
+    green    = color.new(#00E676, 0)
+    red      = color.new(#FF1744, 0)
+    gray     = color.silver
+
+    // Header — col 8 shows page info
+    table.cell(t_trades, 0, 0, "#",       text_color=color.white, bgcolor=hdr_bg, text_size=size.small)
+    table.cell(t_trades, 1, 0, "Dir",     text_color=color.white, bgcolor=hdr_bg, text_size=size.small)
+    table.cell(t_trades, 2, 0, "Bought",  text_color=color.white, bgcolor=hdr_bg, text_size=size.small)
+    table.cell(t_trades, 3, 0, "Sold",    text_color=color.white, bgcolor=hdr_bg, text_size=size.small)
+    table.cell(t_trades, 4, 0, "Entry$",  text_color=color.white, bgcolor=hdr_bg, text_size=size.small)
+    table.cell(t_trades, 5, 0, "Exit$",   text_color=color.white, bgcolor=hdr_bg, text_size=size.small)
+    table.cell(t_trades, 6, 0, "P&L",    text_color=color.white, bgcolor=hdr_bg, text_size=size.small)
+    table.cell(t_trades, 7, 0, "P&L%",   text_color=color.white, bgcolor=hdr_bg, text_size=size.small)
+    table.cell(t_trades, 8, 0, "Rsn",    text_color=color.white, bgcolor=hdr_bg, text_size=size.small)
+    table.cell(t_trades, 9, 0, "Pos",    text_color=color.white, bgcolor=hdr_bg, text_size=size.small)
+
+    // Pagination: open positions always shown; closed trades are paged
+    offset    = (page - 1) * max_show
+    avail     = math.max(n_trades - offset, 0)
+    show_n    = math.min(avail, max_show)
+    total_pgs = math.max(math.ceil(n_trades / max_show), 1)
+    pg_label  = "Pg " + str.tostring(page) + "/" + str.tostring(total_pgs) +
+                 " | " + str.tostring(offset + 1) + "-" + str.tostring(offset + show_n) +
+                 " of " + str.tostring(n_trades)
+
+    row = 1
+
+    // Open longs (newest first)
+    if n_open_l > 0
+        for i = n_open_l - 1 to 0
+            if array.size(long_ep) > i
+                ep_val  = array.get(long_ep,  i)
+                et_val  = array.get(long_et,  i)
+                qty_val = array.get(long_qty, i)
+                unr_pnl = qty_val * (close - ep_val)
+                unr_pct = (close - ep_val) / ep_val * 100 * lev
+                pnl_clr = unr_pnl >= 0 ? green : red
+                pct_s   = (unr_pct >= 0 ? "+" : "") + str.tostring(math.round(unr_pct, 2)) + "%"
+                edate_s = str.format_time(et_val, "dd MMM HH:mm", display_tz)
+                table.cell(t_trades, 0, row, "●",                                  text_color=green,        bgcolor=open_bg, text_size=size.small)
+                table.cell(t_trades, 1, row, "Long",                               text_color=green,        bgcolor=open_bg, text_size=size.small)
+                table.cell(t_trades, 2, row, edate_s,                              text_color=color.yellow, bgcolor=open_bg, text_size=size.small)
+                table.cell(t_trades, 3, row, "—",                                  text_color=gray,         bgcolor=open_bg, text_size=size.small)
+                table.cell(t_trades, 4, row, str.tostring(math.round(ep_val, 2)), text_color=gray,         bgcolor=open_bg, text_size=size.small)
+                table.cell(t_trades, 5, row, str.tostring(math.round(close,  2)), text_color=gray,         bgcolor=open_bg, text_size=size.small)
+                table.cell(t_trades, 6, row, str.tostring(math.round(unr_pnl,0)), text_color=pnl_clr,      bgcolor=open_bg, text_size=size.small)
+                table.cell(t_trades, 7, row, pct_s,                               text_color=pnl_clr,      bgcolor=open_bg, text_size=size.small)
+                table.cell(t_trades, 8, row, "Open",  text_color=green,  bgcolor=open_bg, text_size=size.small)
+                pos_s = str.tostring(n_open_l) + "L/" + str.tostring(n_open_s) + "S"
+                table.cell(t_trades, 9, row, pos_s,   text_color=green, bgcolor=open_bg, text_size=size.small)
+                row += 1
+
+    // Open shorts (newest first)
+    if n_open_s > 0
+        for i = n_open_s - 1 to 0
+            if array.size(short_ep) > i
+                ep_val  = array.get(short_ep,  i)
+                et_val  = array.get(short_et,  i)
+                qty_val = array.get(short_qty, i)
+                unr_pnl = qty_val * (ep_val - close)
+                unr_pct = (ep_val - close) / ep_val * 100 * lev
+                pnl_clr = unr_pnl >= 0 ? green : red
+                pct_s   = (unr_pct >= 0 ? "+" : "") + str.tostring(math.round(unr_pct, 2)) + "%"
+                edate_s = str.format_time(et_val, "dd MMM HH:mm", display_tz)
+                table.cell(t_trades, 0, row, "●",                                  text_color=red,          bgcolor=open_bg, text_size=size.small)
+                table.cell(t_trades, 1, row, "Short",                              text_color=red,          bgcolor=open_bg, text_size=size.small)
+                table.cell(t_trades, 2, row, edate_s,                              text_color=color.yellow, bgcolor=open_bg, text_size=size.small)
+                table.cell(t_trades, 3, row, "—",                                  text_color=gray,         bgcolor=open_bg, text_size=size.small)
+                table.cell(t_trades, 4, row, str.tostring(math.round(ep_val, 2)), text_color=gray,         bgcolor=open_bg, text_size=size.small)
+                table.cell(t_trades, 5, row, str.tostring(math.round(close,  2)), text_color=gray,         bgcolor=open_bg, text_size=size.small)
+                table.cell(t_trades, 6, row, str.tostring(math.round(unr_pnl,0)), text_color=pnl_clr,      bgcolor=open_bg, text_size=size.small)
+                table.cell(t_trades, 7, row, pct_s,                               text_color=pnl_clr,      bgcolor=open_bg, text_size=size.small)
+                table.cell(t_trades, 8, row, "Open",  text_color=red,    bgcolor=open_bg, text_size=size.small)
+                pos_s = str.tostring(n_open_l) + "L/" + str.tostring(n_open_s) + "S"
+                table.cell(t_trades, 9, row, pos_s,   text_color=red, bgcolor=open_bg, text_size=size.small)
+                row += 1
+
+    // Closed trades — sorted by Bought date (newest entry first), paginated
+    if show_n > 0
+        sort_keys = array.sort_indices(th_et_raw, order.descending)
+        for j = 1 to show_n
+            sort_pos = offset + j - 1
+            if sort_pos < n_trades
+                idx  = array.get(sort_keys, sort_pos)
+                isW  = array.get(th_win, idx)
+                clr  = isW ? green : red
+                dir  = array.get(th_dir, idx)
+                dclr = dir == "Long" ? green : red
+                table.cell(t_trades, 0, row, str.tostring(array.get(th_num,   idx)), text_color=gray,         bgcolor=cell_bg, text_size=size.small)
+                table.cell(t_trades, 1, row, dir,                                     text_color=dclr,         bgcolor=cell_bg, text_size=size.small)
+                table.cell(t_trades, 2, row, array.get(th_edate, idx),               text_color=color.yellow, bgcolor=cell_bg, text_size=size.small)
+                table.cell(t_trades, 3, row, array.get(th_xdate, idx),               text_color=color.orange, bgcolor=cell_bg, text_size=size.small)
+                table.cell(t_trades, 4, row, str.tostring(math.round(array.get(th_ep, idx), 2)), text_color=gray, bgcolor=cell_bg, text_size=size.small)
+                table.cell(t_trades, 5, row, str.tostring(math.round(array.get(th_xp, idx), 2)), text_color=gray, bgcolor=cell_bg, text_size=size.small)
+                table.cell(t_trades, 6, row, array.get(th_pnl, idx),                text_color=clr,          bgcolor=cell_bg, text_size=size.small)
+                table.cell(t_trades, 7, row, array.get(th_pct, idx),                text_color=clr,          bgcolor=cell_bg, text_size=size.small)
+                table.cell(t_trades, 8, row, array.get(th_rsn, idx),  text_color=gray, bgcolor=cell_bg, text_size=size.small)
+                ol   = array.get(th_open_l, idx)
+                os_  = array.get(th_open_s, idx)
+                pos_s = str.tostring(ol) + "L/" + str.tostring(os_) + "S"
+                table.cell(t_trades, 9, row, pos_s, text_color=dclr, bgcolor=cell_bg, text_size=size.small)
+                row += 1
+
+    // Footer: page info
+    footer_bg = color.new(#1a3a5c, 40)
+    table.cell(t_trades, 0, row, pg_label, text_color=color.silver, bgcolor=footer_bg, text_size=size.small)
+    table.merge_cells(t_trades, 0, row, 8, row)
+
+// ─── CHART VISUALS ────────────────────────────────────────────────────────────
+plotshape(show_signals and new_buy_signal,  title="BUY",  style=shape.triangleup,   location=location.belowbar, color=color.new(#00E676, 0), size=size.normal, text="BUY")
+plotshape(show_signals and new_sell_signal, title="SELL", style=shape.triangledown,  location=location.abovebar, color=color.new(#FF1744, 0), size=size.normal, text="SELL")
+n_long  = array.size(long_ep)
+n_short = array.size(short_ep)
+bgcolor(n_long > 0 and n_short > 0 ? color.new(color.purple, 88) : n_long > 0 ? color.new(color.green, 92) : n_short > 0 ? color.new(color.red, 92) : na)
+
+// ─── ALERTS ───────────────────────────────────────────────────────────────────
+// Frequency: "Once Per Bar Close" — fires 1-5s after bar close, executes ~2-7s total.
+// lev/alloc stored in bot config — Pine Script alertcondition requires const strings.
+
+alertcondition(buy_signal,
+     title   = "IA: BUY Signal",
+     message = '{"action":"BUY","symbol":"{{ticker}}","price":"{{close}}","interval":"{{interval}}","time":"{{timenow}}"}')
+
+alertcondition(sell_signal,
+     title   = "IA: SELL Signal",
+     message = '{"action":"SELL","symbol":"{{ticker}}","price":"{{close}}","interval":"{{interval}}","time":"{{timenow}}"}')
+
+alertcondition(tp_sell_signal,
+     title   = "IA: TP Exit Signal",
+     message = '{"action":"TP_EXIT","symbol":"{{ticker}}","price":"{{close}}","interval":"{{interval}}","time":"{{timenow}}"}')
+
+alertcondition(tps_buy_signal,
+     title   = "IA: Short TP Exit Signal",
+     message = '{"action":"TP_EXIT_SHORT","symbol":"{{ticker}}","price":"{{close}}","interval":"{{interval}}","time":"{{timenow}}"}')
+
+alertcondition(buy_signal or sell_signal or tp_sell_signal or tps_buy_signal,
+     title   = "IA: Any Signal",
+     message = '{"symbol":"{{ticker}}","price":"{{close}}","interval":"{{interval}}","time":"{{timenow}}"}')
