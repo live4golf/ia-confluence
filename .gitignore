@@ -1,0 +1,6 @@
+node_modules/
+*.png
+tradingview-mcp/
+package-lock.json
+get_chart_data.js
+take_screenshot.js
