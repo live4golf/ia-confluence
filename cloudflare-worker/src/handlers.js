@@ -24,10 +24,10 @@ export async function handleBuy(env, payload) {
   const order = await submitOrder(env, {
     symbol,
     price: 0,          // market order
-    vol: qty,
+    vol: Math.round(qty),
     leverage: lev,
     side: 1,           // Open Long
-    type: 5,           // Market order (MEXC uses type 5 for market)
+    type: 5,           // Market order
     openType: 1,       // Isolated margin
   });
 
@@ -57,11 +57,11 @@ export async function handleSell(env, payload) {
   const order = await submitOrder(env, {
     symbol,
     price: 0,
-    vol: qty,
+    vol: Math.round(qty),
     leverage: lev,
     side: 3,           // Open Short
     type: 5,
-    openType: 2,
+    openType: 1,       // Isolated margin
   });
 
   const status   = order.success ? 'open' : 'error';
@@ -94,11 +94,11 @@ export async function handleTpExit(env, payload) {
   const order = await submitOrder(env, {
     symbol,
     price: 0,
-    vol: qty,
+    vol: Math.round(qty),
     leverage: lev,
     side: 2,           // Close Long
     type: 5,
-    openType: 2,
+    openType: 1,       // Isolated margin
     positionType: 1,   // Hedge mode: specify long position
   });
 
@@ -131,11 +131,11 @@ export async function handleTpsExit(env, payload) {
   const order = await submitOrder(env, {
     symbol,
     price: 0,
-    vol: qty,
+    vol: Math.round(qty),
     leverage: lev,
     side: 4,           // Close Short
     type: 5,
-    openType: 2,
+    openType: 1,       // Isolated margin
     positionType: 2,   // Hedge mode: specify short position
   });
 

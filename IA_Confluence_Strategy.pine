@@ -344,7 +344,7 @@ if new_buy_signal
             array.push(long_el,  array.size(long_ep))
             array.push(long_es,  array.size(short_ep))
             label.new(bar_index, low, "L " + str.tostring(math.round(close, 2)), style=label.style_label_up, color=color.new(#00E676, 20), textcolor=color.white, size=size.tiny)
-            alert('{"action":"BUY","qty":' + str.tostring(qty_val, "0.##") + ',"price":' + str.tostring(close, "0.##") + '}', alert.freq_once_per_bar_close)
+            alert('{"action":"BUY","qty":' + str.tostring(math.round(trade_usdt * lev), "0") + ',"price":' + str.tostring(close, "0.##") + '}', alert.freq_once_per_bar_close)
 
 // ─── PROFIT EXIT LONG (close long at target %, no new short) ────────────────
 if new_tp_sell_signal
@@ -365,7 +365,7 @@ if new_tp_sell_signal
                 wins += 1
             record_trade("Long", et_cl, ep_cl, close, net, "TP Exit", el_cl, es_cl)
             label.new(bar_index, low, "TP " + str.tostring(math.round(net, 0)) + " (" + str.tostring(math.round(unr_pct, 1)) + "%)", style=label.style_label_up, color=color.new(color.teal, 10), textcolor=color.white, size=size.tiny)
-            alert('{"action":"TP_EXIT","qty":' + str.tostring(qty_val, "0.##") + ',"price":' + str.tostring(close, "0.##") + '}', alert.freq_once_per_bar_close)
+            alert('{"action":"TP_EXIT","qty":' + str.tostring(math.round(trade_usdt * lev), "0") + ',"price":' + str.tostring(close, "0.##") + '}', alert.freq_once_per_bar_close)
 
 // ─── PROFIT EXIT SHORT (close short at target %, no new long) ────────────────
 if new_tps_buy_signal
@@ -386,7 +386,7 @@ if new_tps_buy_signal
                 wins += 1
             record_trade("Short", et_cs, ep_cs, close, net, "TP Exit", el_cs, es_cs)
             label.new(bar_index, high, "TP " + str.tostring(math.round(net, 0)) + " (" + str.tostring(math.round(unr_pct, 1)) + "%)", style=label.style_label_down, color=color.new(color.teal, 10), textcolor=color.white, size=size.tiny)
-            alert('{"action":"TP_EXIT_SHORT","qty":' + str.tostring(qty_val, "0.##") + ',"price":' + str.tostring(close, "0.##") + '}', alert.freq_once_per_bar_close)
+            alert('{"action":"TP_EXIT_SHORT","qty":' + str.tostring(math.round(trade_usdt * lev), "0") + ',"price":' + str.tostring(close, "0.##") + '}', alert.freq_once_per_bar_close)
 
 // ─── SELL SIGNAL ──────────────────────────────────────────────────────────────
 if new_sell_signal
@@ -424,7 +424,7 @@ if new_sell_signal
             array.push(short_el,  array.size(long_ep))
             array.push(short_es,  array.size(short_ep))
             label.new(bar_index, high, "S " + str.tostring(math.round(close, 2)), style=label.style_label_down, color=color.new(#FF1744, 20), textcolor=color.white, size=size.tiny)
-            alert('{"action":"SELL","qty":' + str.tostring(qty_val, "0.##") + ',"price":' + str.tostring(close, "0.##") + '}', alert.freq_once_per_bar_close)
+            alert('{"action":"SELL","qty":' + str.tostring(math.round(trade_usdt * lev), "0") + ',"price":' + str.tostring(close, "0.##") + '}', alert.freq_once_per_bar_close)
 
 // ─── MAX DRAWDOWN ─────────────────────────────────────────────────────────────
 peak_equity := math.max(peak_equity, equity)
