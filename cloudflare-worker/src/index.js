@@ -14,6 +14,7 @@
  */
 
 import { handleBuy, handleSell, handleTpExit, handleTpsExit, handleTsl, handleTslShort } from './handlers.js';
+import { handleStatus } from './status.js';
 
 const HANDLERS = {
   BUY:           handleBuy,
@@ -25,9 +26,15 @@ const HANDLERS = {
 };
 
 export default {
-  async fetch(request, env) {
-    // Only accept POST to /webhook
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
+
+    // GET /status — trade dashboard
+    if (request.method === 'GET' && url.pathname === '/status') {
+      return handleStatus(env, url);
+    }
+
+    // Only accept POST to /webhook
     if (request.method !== 'POST' || url.pathname !== '/webhook') {
       return new Response('Not found', { status: 404 });
     }
@@ -57,12 +64,16 @@ export default {
     // Default symbol from env if not in payload
     payload.symbol = payload.symbol ?? env.SYMBOL;
 
+    // Attach ctx so handlers can use waitUntil for background work
+    env._ctx = ctx;
+
     // Execute handler
     try {
       const result = await handler(env, payload);
+      console.log('[WEBHOOK]', action, JSON.stringify(result));
       return json({ ok: true, action, dry_run: env.DRY_RUN === 'true', ...result });
     } catch (err) {
-      console.error('Handler error:', err);
+      console.error('Handler error:', action, err.message, err.stack);
       return json({ ok: false, error: err.message }, 500);
     }
   },

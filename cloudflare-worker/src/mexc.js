@@ -35,6 +35,7 @@ async function sign(secretKey, message) {
 export async function submitOrder(env, params) {
   const timestamp = Date.now().toString();
   const body = JSON.stringify(params);
+  console.log('[submitOrder] body:', body);
   const message = env.MEXC_API_KEY + timestamp + body;
   const signature = await sign(env.MEXC_SECRET_KEY, message);
 
@@ -64,6 +65,30 @@ export async function getOpenPositions(env, symbol) {
   const signature = await sign(env.MEXC_SECRET_KEY, message);
 
   const url = `${env.MEXC_BASE}/api/v1/private/position/open_positions?symbol=${symbol}`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'ApiKey':       env.MEXC_API_KEY,
+      'Request-Time': timestamp,
+      'Signature':    signature,
+    },
+  });
+
+  const json = await res.json();
+  return json.success ? (json.data ?? []) : [];
+}
+
+/**
+ * Get order deal details (fill price, qty, fee, etc.)
+ * Returns array of deal objects with price, vol, fee, etc.
+ */
+export async function getOrderDeals(env, orderId) {
+  const timestamp = Date.now().toString();
+  const paramStr  = `order_id=${orderId}`;
+  const message   = env.MEXC_API_KEY + timestamp + paramStr;
+  const signature = await sign(env.MEXC_SECRET_KEY, message);
+
+  const url = `${env.MEXC_BASE}/api/v1/private/order/deals/${orderId}`;
   const res = await fetch(url, {
     method: 'GET',
     headers: {

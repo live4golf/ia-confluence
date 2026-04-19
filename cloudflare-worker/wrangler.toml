@@ -11,7 +11,8 @@ database_id   = "2c864d47-fde2-43f1-9294-251bfef480a6"
 # Set DRY_RUN = "true" during testing — no orders will be sent to MEXC
 DRY_RUN  = "false"
 SYMBOL   = "SOL_USDT"
-LEVERAGE = "3"
+LEVERAGE      = "3"
+CONTRACT_SIZE = "0.1"   # SOL per contract on MEXC SOL_USDT
 # Base URL — update if MEXC migrates again
 MEXC_BASE = "https://api.mexc.com"
 
